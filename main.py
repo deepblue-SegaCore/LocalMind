@@ -14,6 +14,7 @@ import json
 import hashlib
 from datetime import datetime
 import io
+from collections import Counter, defaultdict
 
 # Import enhanced search
 from enhanced_search import EnhancedDocumentProcessor, EnhancedSearchEngine, integrate_enhanced_search
@@ -36,6 +37,33 @@ search_history = []
 # Initialize enhanced search engine
 enhanced_processor = EnhancedDocumentProcessor()
 enhanced_search = EnhancedSearchEngine(enhanced_processor)
+
+def migrate_existing_documents():
+    """
+    Migrate existing documents to enhanced search
+    """
+    print("Migrating existing documents to enhanced search...")
+    
+    migrated = 0
+    for doc_id, doc in documents_db.items():
+        if doc_id not in enhanced_search.documents:
+            enhanced_search.add_document(
+                doc_id=doc_id,
+                content=doc.get('content', ''),
+                filename=doc.get('title', doc.get('filename', 'unknown'))
+            )
+            migrated += 1
+    
+    print(f"Migrated {migrated} documents")
+
+@app.on_event("startup")
+async def startup_event():
+    """Enhanced startup with migration"""
+    # Migrate any existing documents
+    if documents_db:
+        migrate_existing_documents()
+    
+    print(f"✅ LocalMind started with enhanced search - {len(documents_db)} documents ready")
 
 class SearchRequest(BaseModel):
     query: str
@@ -562,11 +590,27 @@ async def delete_document(doc_id: str):
 @app.get("/api/stats")
 async def get_stats():
     """Get enhanced application statistics"""
+    # Category distribution
+    category_dist = defaultdict(int)
+    for doc in enhanced_search.processed_docs.values():
+        for cat in doc.get('categories', []):
+            category_dist[cat] += 1
+    
+    # Most common tags
+    all_tags = []
+    for doc in enhanced_search.processed_docs.values():
+        all_tags.extend(doc.get('tags', []))
+    
+    tag_freq = Counter(all_tags).most_common(10)
+    
     return {
         "total_documents": len(documents_db),
         "total_searches": len(search_history),
         "recent_searches": search_history[-5:][::-1] if search_history else [],
         "storage_used_kb": sum(doc["size"] for doc in documents_db.values()) / 1024 if documents_db else 0,
+        "category_distribution": dict(category_dist),
+        "popular_tags": tag_freq,
+        "document_types": Counter(doc.get("type", "unknown") for doc in documents_db.values()),
         "enhanced_features": {
             "categories_detected": len(set(cat for doc in enhanced_search.processed_docs.values() 
                                         for cat in doc.get('categories', []))),
@@ -617,6 +661,37 @@ async def get_document_analysis(doc_id: str):
             }
         }
     }
+
+def test_enhanced_search():
+    """Test function to verify enhanced search is working"""
+    # Add a test document
+    test_doc = """
+    Construction Safety Report
+    Date: 2024-12-15
+    Project: Building A Foundation
+    
+    Concrete specifications: 3000 PSI required for foundation.
+    Reference Drawing: DWG-A-101
+    Temperature during pour: 75°F
+    
+    Safety requirements per OSHA standards.
+    All workers must wear PPE including hard hats.
+    """
+    
+    doc_id = "test_001"
+    processed = enhanced_search.add_document(doc_id, test_doc, "safety_report.txt")
+    
+    print("Document processed:")
+    print(f"  Categories: {processed['categories']}")
+    print(f"  Tags: {processed['tags'][:5]}")
+    print(f"  Dates found: {processed['extracted_data']['dates']}")
+    print(f"  Measurements: {processed['extracted_data']['measurements'][:3]}")
+    
+    # Test search
+    results = enhanced_search.search("concrete foundation", 5)
+    print(f"\nSearch results for 'concrete foundation': {len(results)} found")
+    for r in results:
+        print(f"  - {r['title']} (score: {r['score']})")
 
 if __name__ == "__main__":
     import uvicorn
