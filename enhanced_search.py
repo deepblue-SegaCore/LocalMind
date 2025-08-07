@@ -1,0 +1,469 @@
+
+# enhanced_search.py
+"""
+Enhanced Search Module for LocalMind
+Add this to your existing project for better search capabilities
+Compatible with your current setup
+"""
+
+import re
+from typing import List, Dict, Any, Tuple
+from datetime import datetime
+import hashlib
+from collections import Counter, defaultdict
+import math
+
+class EnhancedDocumentProcessor:
+    """Enhanced document processing with construction/PM focus"""
+    
+    def __init__(self):
+        # Construction/PM specific keywords for better ranking
+        self.domain_keywords = {
+            'construction': ['construction', 'building', 'site', 'foundation', 'structure', 'concrete', 'steel'],
+            'project_management': ['pm', 'project', 'schedule', 'milestone', 'deliverable', 'gantt', 'timeline'],
+            'specification': ['spec', 'specification', 'requirement', 'standard', 'astm', 'code', 'psi'],
+            'safety': ['safety', 'hazard', 'ppe', 'osha', 'accident', 'prevention', 'training'],
+            'electrical': ['electrical', 'power', 'circuit', 'voltage', 'amp', 'wire', 'panel'],
+            'mechanical': ['hvac', 'plumbing', 'pipe', 'duct', 'valve', 'pump', 'flow'],
+            'quality': ['quality', 'inspection', 'test', 'qc', 'qa', 'defect', 'compliance']
+        }
+        
+        # Common abbreviations in construction
+        self.abbreviations = {
+            'rfi': 'request for information',
+            'rcp': 'reflected ceiling plan',
+            'sov': 'schedule of values',
+            'co': 'change order',
+            'aff': 'above finished floor',
+            'bom': 'bill of materials',
+            'mep': 'mechanical electrical plumbing',
+            'vif': 'verify in field'
+        }
+    
+    def process_document(self, content: str, filename: str) -> Dict[str, Any]:
+        """Process document with enhanced extraction"""
+        
+        # Basic processing
+        processed = {
+            'filename': filename,
+            'content': content,
+            'content_lower': content.lower(),
+            'length': len(content),
+            'word_count': len(content.split()),
+            'categories': [],
+            'extracted_data': {}
+        }
+        
+        # Detect document category
+        processed['categories'] = self.detect_categories(content)
+        
+        # Extract structured data
+        processed['extracted_data'] = {
+            'dates': self.extract_dates(content),
+            'measurements': self.extract_measurements(content),
+            'references': self.extract_references(content),
+            'specifications': self.extract_specifications(content),
+            'people': self.extract_people(content),
+            'locations': self.extract_locations(content)
+        }
+        
+        # Create searchable summary
+        processed['summary'] = self.create_summary(content)
+        
+        # Generate tags
+        processed['tags'] = self.generate_tags(content, processed['categories'])
+        
+        return processed
+    
+    def detect_categories(self, content: str) -> List[str]:
+        """Detect document categories based on content"""
+        content_lower = content.lower()
+        detected = []
+        
+        for category, keywords in self.domain_keywords.items():
+            score = sum(1 for keyword in keywords if keyword in content_lower)
+            if score >= 2:  # At least 2 keywords to classify
+                detected.append(category)
+        
+        return detected
+    
+    def extract_dates(self, content: str) -> List[str]:
+        """Extract dates from content"""
+        date_patterns = [
+            r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}',
+            r'\d{4}[/-]\d{1,2}[/-]\d{1,2}',
+            r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}',
+            r'\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4}'
+        ]
+        
+        dates = []
+        for pattern in date_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            dates.extend(matches)
+        
+        return list(set(dates))[:10]  # Return up to 10 unique dates
+    
+    def extract_measurements(self, content: str) -> List[Dict[str, str]]:
+        """Extract measurements and specifications"""
+        measurements = []
+        
+        patterns = {
+            'concrete_strength': r'(\d+)\s*(?:PSI|psi)',
+            'dimensions': r'(\d+(?:\.\d+)?)\s*(?:ft|feet|m|meters|mm|cm|inches|")',
+            'temperature': r'(\d+)\s*(?:°F|°C|degrees)',
+            'percentage': r'(\d+(?:\.\d+)?)\s*%',
+            'weight': r'(\d+(?:\.\d+)?)\s*(?:lbs|kg|tons)',
+            'voltage': r'(\d+)\s*(?:V|volts|kV)',
+            'current': r'(\d+)\s*(?:A|amps|amperes)'
+        }
+        
+        for measure_type, pattern in patterns.items():
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for match in matches[:5]:  # Limit to 5 per type
+                measurements.append({
+                    'type': measure_type,
+                    'value': match,
+                    'context': self.get_context(content, match)
+                })
+        
+        return measurements
+    
+    def extract_references(self, content: str) -> List[str]:
+        """Extract document references"""
+        references = []
+        
+        patterns = [
+            r'(?:Drawing|DWG|Sheet)[\s#]*([A-Z0-9\-]+)',
+            r'(?:Spec|Specification)[\s#]*([A-Z0-9\-]+)',
+            r'(?:Section)[\s#]*(\d+(?:\.\d+)*)',
+            r'(?:Reference|Ref)[\s#:]*([A-Z0-9\-]+)',
+            r'(?:Document|Doc)[\s#]*([A-Z0-9\-]+)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            references.extend(matches)
+        
+        return list(set(references))[:20]
+    
+    def extract_specifications(self, content: str) -> List[str]:
+        """Extract specification codes and standards"""
+        specs = []
+        
+        patterns = [
+            r'ASTM\s+[A-Z]\d+',
+            r'ACI\s+\d+',
+            r'ASCE\s+\d+',
+            r'IEEE\s+\d+',
+            r'NFPA\s+\d+',
+            r'AWS\s+[A-Z]\d+\.\d+',
+            r'ISO\s+\d+'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            specs.extend(matches)
+        
+        return list(set(specs))
+    
+    def extract_people(self, content: str) -> List[str]:
+        """Extract potential people names"""
+        # Simple pattern for names (can be enhanced with NER)
+        pattern = r'(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([A-Z][a-z]+ [A-Z][a-z]+)'
+        matches = re.findall(pattern, content)
+        return list(set(matches))[:10]
+    
+    def extract_locations(self, content: str) -> List[str]:
+        """Extract location references"""
+        locations = []
+        
+        patterns = [
+            r'(?:Building|Bldg)[\s#]*([A-Z0-9]+)',
+            r'(?:Floor|Level)[\s#]*([0-9]+|[A-Z]+)',
+            r'(?:Room|Rm)[\s#]*([A-Z0-9]+)',
+            r'(?:Grid|Column)[\s#]*([A-Z0-9\-]+)',
+            r'(?:Area|Zone)[\s#]*([A-Z0-9]+)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            locations.extend(matches)
+        
+        return list(set(locations))[:15]
+    
+    def get_context(self, content: str, term: str, window: int = 50) -> str:
+        """Get context around a term"""
+        try:
+            index = content.lower().find(str(term).lower())
+            if index == -1:
+                return ""
+            
+            start = max(0, index - window)
+            end = min(len(content), index + len(str(term)) + window)
+            
+            context = content[start:end]
+            if start > 0:
+                context = "..." + context
+            if end < len(content):
+                context = context + "..."
+            
+            return context
+        except:
+            return ""
+    
+    def create_summary(self, content: str, max_sentences: int = 3) -> str:
+        """Create a brief summary of the document"""
+        # Split into sentences
+        sentences = re.split(r'[.!?]+', content)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
+        
+        if not sentences:
+            return content[:200]
+        
+        # Simple extractive summary - take first few sentences
+        summary = '. '.join(sentences[:max_sentences])
+        
+        # Limit length
+        if len(summary) > 300:
+            summary = summary[:297] + "..."
+        
+        return summary
+    
+    def generate_tags(self, content: str, categories: List[str]) -> List[str]:
+        """Generate search tags"""
+        tags = []
+        
+        # Add category tags
+        tags.extend(categories)
+        
+        # Extract important words (simple TF approach)
+        words = re.findall(r'\b[A-Za-z]{4,}\b', content.lower())
+        word_freq = Counter(words)
+        
+        # Filter out common words
+        common_words = {'that', 'this', 'with', 'from', 'have', 'will', 'been', 'were', 'their', 'about'}
+        important_words = [word for word, count in word_freq.most_common(20) 
+                          if word not in common_words and count > 1]
+        
+        tags.extend(important_words[:10])
+        
+        return list(set(tags))
+
+
+class EnhancedSearchEngine:
+    """Enhanced search engine with better ranking"""
+    
+    def __init__(self, processor: EnhancedDocumentProcessor):
+        self.processor = processor
+        self.documents = {}
+        self.processed_docs = {}
+        self.search_history = []
+        
+    def add_document(self, doc_id: str, content: str, filename: str) -> Dict[str, Any]:
+        """Add and process a document"""
+        # Process the document
+        processed = self.processor.process_document(content, filename)
+        
+        # Store both raw and processed
+        self.documents[doc_id] = {
+            'id': doc_id,
+            'filename': filename,
+            'content': content,
+            'added_at': datetime.now().isoformat()
+        }
+        
+        self.processed_docs[doc_id] = processed
+        
+        return processed
+    
+    def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Enhanced search with multiple ranking factors"""
+        if not self.documents:
+            return []
+        
+        # Process query
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        
+        # Expand query with abbreviations
+        expanded_words = set()
+        for word in query_words:
+            expanded_words.add(word)
+            if word in self.processor.abbreviations:
+                expanded_words.add(self.processor.abbreviations[word])
+        
+        results = []
+        
+        for doc_id, doc in self.documents.items():
+            processed = self.processed_docs[doc_id]
+            
+            # Calculate different relevance scores
+            scores = {
+                'title_match': self._score_title_match(doc['filename'], query_lower),
+                'content_match': self._score_content_match(processed['content_lower'], expanded_words),
+                'category_match': self._score_category_match(processed['categories'], query_lower),
+                'tag_match': self._score_tag_match(processed.get('tags', []), query_words),
+                'data_match': self._score_extracted_data(processed['extracted_data'], query_lower),
+                'recency': self._score_recency(doc['added_at'])
+            }
+            
+            # Weighted combination
+            total_score = (
+                scores['title_match'] * 3.0 +
+                scores['content_match'] * 2.0 +
+                scores['category_match'] * 1.5 +
+                scores['tag_match'] * 1.5 +
+                scores['data_match'] * 1.0 +
+                scores['recency'] * 0.5
+            )
+            
+            if total_score > 0:
+                result = {
+                    'id': doc_id,
+                    'title': doc['filename'],
+                    'content': processed.get('summary', doc['content'][:200]),
+                    'score': round(total_score, 3),
+                    'scores': scores,
+                    'categories': processed.get('categories', []),
+                    'tags': processed.get('tags', [])[:5],
+                    'extracted_data': {
+                        'dates': processed['extracted_data'].get('dates', [])[:3],
+                        'references': processed['extracted_data'].get('references', [])[:3]
+                    },
+                    'type': 'document'
+                }
+                results.append(result)
+        
+        # Sort by score
+        results.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Log search
+        self.search_history.append({
+            'query': query,
+            'timestamp': datetime.now().isoformat(),
+            'results_count': len(results)
+        })
+        
+        return results[:max_results]
+    
+    def _score_title_match(self, filename: str, query: str) -> float:
+        """Score based on title/filename match"""
+        filename_lower = filename.lower()
+        if query in filename_lower:
+            return 1.0
+        
+        # Partial match
+        words = query.split()
+        matches = sum(1 for word in words if word in filename_lower)
+        return matches / len(words) if words else 0
+    
+    def _score_content_match(self, content: str, query_words: set) -> float:
+        """Score based on content match"""
+        if not query_words:
+            return 0
+        
+        matches = sum(1 for word in query_words if word in content)
+        
+        # Consider frequency
+        total_freq = sum(content.count(word) for word in query_words)
+        
+        # Normalize by document length
+        length_factor = min(1.0, 1000 / len(content)) if content else 0
+        
+        return (matches / len(query_words)) * (1 + math.log(1 + total_freq)) * length_factor
+    
+    def _score_category_match(self, categories: List[str], query: str) -> float:
+        """Score based on category match"""
+        for category in categories:
+            if category in query or query in category:
+                return 1.0
+        return 0
+    
+    def _score_tag_match(self, tags: List[str], query_words: set) -> float:
+        """Score based on tag match"""
+        if not tags or not query_words:
+            return 0
+        
+        matches = sum(1 for tag in tags if any(word in tag for word in query_words))
+        return matches / len(tags)
+    
+    def _score_extracted_data(self, extracted_data: Dict, query: str) -> float:
+        """Score based on extracted data match"""
+        score = 0
+        
+        # Check if query contains any extracted data
+        for data_type, values in extracted_data.items():
+            if values:
+                for value in values:
+                    if isinstance(value, str) and value.lower() in query:
+                        score += 0.5
+                    elif isinstance(value, dict) and str(value.get('value', '')).lower() in query:
+                        score += 0.5
+        
+        return min(score, 1.0)
+    
+    def _score_recency(self, added_at: str) -> float:
+        """Score based on how recent the document is"""
+        try:
+            added = datetime.fromisoformat(added_at)
+            age_days = (datetime.now() - added).days
+            # Decay factor - newer documents get higher score
+            return max(0, 1 - (age_days / 30))  # Decay over 30 days
+        except:
+            return 0.5
+    
+    def get_similar_documents(self, doc_id: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        """Find similar documents to a given document"""
+        if doc_id not in self.processed_docs:
+            return []
+        
+        source_doc = self.processed_docs[doc_id]
+        source_tags = set(source_doc.get('tags', []))
+        source_categories = set(source_doc.get('categories', []))
+        
+        similar = []
+        
+        for other_id, other_doc in self.processed_docs.items():
+            if other_id == doc_id:
+                continue
+            
+            other_tags = set(other_doc.get('tags', []))
+            other_categories = set(other_doc.get('categories', []))
+            
+            # Calculate similarity
+            tag_similarity = len(source_tags & other_tags) / len(source_tags | other_tags) if source_tags or other_tags else 0
+            category_similarity = len(source_categories & other_categories) / len(source_categories | other_categories) if source_categories or other_categories else 0
+            
+            similarity_score = (tag_similarity * 0.6 + category_similarity * 0.4)
+            
+            if similarity_score > 0.2:  # Threshold
+                similar.append({
+                    'id': other_id,
+                    'title': self.documents[other_id]['filename'],
+                    'similarity': round(similarity_score, 3),
+                    'common_tags': list(source_tags & other_tags)[:5],
+                    'common_categories': list(source_categories & other_categories)
+                })
+        
+        similar.sort(key=lambda x: x['similarity'], reverse=True)
+        return similar[:max_results]
+
+
+# Integration with your existing code
+def integrate_enhanced_search(existing_doc_store):
+    """
+    Function to integrate enhanced search with your existing document store
+    Call this in your main.py
+    """
+    processor = EnhancedDocumentProcessor()
+    search_engine = EnhancedSearchEngine(processor)
+    
+    # Migrate existing documents
+    for doc_id, doc in existing_doc_store.items():
+        search_engine.add_document(
+            doc_id=doc_id,
+            content=doc.get('content', ''),
+            filename=doc.get('title', doc.get('filename', 'unknown'))
+        )
+    
+    return search_engine

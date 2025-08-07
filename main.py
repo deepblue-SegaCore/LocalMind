@@ -15,6 +15,9 @@ import hashlib
 from datetime import datetime
 import io
 
+# Import enhanced search
+from enhanced_search import EnhancedDocumentProcessor, EnhancedSearchEngine, integrate_enhanced_search
+
 app = FastAPI(title="LocalMind - Personal Knowledge Assistant")
 
 # Enable CORS for all origins
@@ -26,9 +29,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory document storage
+# In-memory document storage and enhanced search
 documents_db = {}
 search_history = []
+
+# Initialize enhanced search engine
+enhanced_processor = EnhancedDocumentProcessor()
+enhanced_search = EnhancedSearchEngine(enhanced_processor)
 
 class SearchRequest(BaseModel):
     query: str
@@ -282,12 +289,26 @@ HTML_CONTENT = """
                 resultsDiv.innerHTML = '<p class="text-gray-500">No results found</p>';
             } else {
                 resultsDiv.innerHTML = results.map(result => `
-                    <div class="border-l-4 border-purple-500 pl-4 py-2">
+                    <div class="border-l-4 border-purple-500 pl-4 py-2 mb-4">
                         <h4 class="font-semibold text-gray-800">${result.title}</h4>
                         <p class="text-gray-600 text-sm mt-1">${result.content.substring(0, 200)}...</p>
+                        ${result.categories && result.categories.length > 0 ? `
+                            <div class="mt-2">
+                                <span class="text-xs text-blue-600 font-medium">Categories: </span>
+                                ${result.categories.map(cat => `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded mr-1">${cat}</span>`).join('')}
+                            </div>
+                        ` : ''}
+                        ${result.tags && result.tags.length > 0 ? `
+                            <div class="mt-1">
+                                <span class="text-xs text-green-600 font-medium">Tags: </span>
+                                ${result.tags.slice(0, 5).map(tag => `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded mr-1">${tag}</span>`).join('')}
+                            </div>
+                        ` : ''}
                         <div class="flex gap-4 mt-2 text-xs text-gray-500">
                             <span>Type: ${result.type}</span>
                             ${result.score ? `<span>Score: ${result.score.toFixed(3)}</span>` : ''}
+                            ${result.extracted_data && result.extracted_data.dates && result.extracted_data.dates.length > 0 ? 
+                                `<span>📅 ${result.extracted_data.dates.length} dates</span>` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -420,7 +441,7 @@ async def health_check():
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Handle file upload"""
+    """Handle file upload with enhanced processing"""
     try:
         # Check file size
         contents = await file.read()
@@ -445,7 +466,7 @@ async def upload_file(file: UploadFile = File(...)):
         else:
             content_str = contents.decode('utf-8', errors='ignore')
         
-        # Store document
+        # Store document in basic store
         documents_db[doc_id] = {
             "id": doc_id,
             "title": file.filename,
@@ -455,8 +476,11 @@ async def upload_file(file: UploadFile = File(...)):
             "uploaded_at": datetime.now().isoformat()
         }
         
+        # Add to enhanced search engine
+        enhanced_search.add_document(doc_id, content_str, file.filename)
+        
         return {
-            "message": "File uploaded successfully",
+            "message": "File uploaded and processed successfully",
             "document": {
                 "id": doc_id,
                 "title": file.filename,
@@ -472,29 +496,10 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/api/search")
 async def search(request: SearchRequest):
-    """Search documents"""
+    """Enhanced search with semantic capabilities"""
     try:
-        results = []
-        query_lower = request.query.lower()
-        
-        # Search through documents
-        for doc_id, doc in documents_db.items():
-            if query_lower in doc["content"].lower() or query_lower in doc["title"].lower():
-                # Calculate simple relevance score
-                title_score = doc["title"].lower().count(query_lower) * 2
-                content_score = doc["content"].lower().count(query_lower)
-                total_score = (title_score + content_score) / (len(doc["content"]) / 100)
-                
-                results.append({
-                    "id": doc["id"],
-                    "title": doc["title"],
-                    "content": doc["content"][:300],
-                    "type": doc["type"],
-                    "score": min(total_score, 1.0)
-                })
-        
-        # Sort by score
-        results.sort(key=lambda x: x["score"], reverse=True)
+        # Use enhanced search engine
+        results = enhanced_search.search(request.query, request.max_results)
         
         # Add to search history
         search_history.append({
@@ -505,20 +510,29 @@ async def search(request: SearchRequest):
         
         # Mock web results if requested
         if request.include_web:
-            results.append({
+            web_result = {
                 "id": "web1",
-                "title": f"Web: {request.query} - Wikipedia",
-                "content": f"Information about {request.query} from web sources...",
+                "title": f"Web: {request.query} - Building Standards",
+                "content": f"Latest building codes and standards for {request.query}...",
                 "type": "web",
-                "score": 0.5
-            })
+                "score": 0.5,
+                "categories": [],
+                "tags": []
+            }
+            results.append(web_result)
         
         return {
-            "results": results[:request.max_results],
+            "results": results,
             "total": len(results),
             "query_analysis": {
                 "query": request.query,
-                "terms": request.query.split()
+                "terms": request.query.split(),
+                "enhanced_features": {
+                    "category_detection": True,
+                    "tag_matching": True,
+                    "data_extraction": True,
+                    "semantic_scoring": True
+                }
             }
         }
         
@@ -547,12 +561,61 @@ async def delete_document(doc_id: str):
 
 @app.get("/api/stats")
 async def get_stats():
-    """Get application statistics"""
+    """Get enhanced application statistics"""
     return {
         "total_documents": len(documents_db),
         "total_searches": len(search_history),
         "recent_searches": search_history[-5:][::-1] if search_history else [],
-        "storage_used_kb": sum(doc["size"] for doc in documents_db.values()) / 1024 if documents_db else 0
+        "storage_used_kb": sum(doc["size"] for doc in documents_db.values()) / 1024 if documents_db else 0,
+        "enhanced_features": {
+            "categories_detected": len(set(cat for doc in enhanced_search.processed_docs.values() 
+                                        for cat in doc.get('categories', []))),
+            "tags_generated": len(set(tag for doc in enhanced_search.processed_docs.values() 
+                                    for tag in doc.get('tags', []))),
+            "extracted_data_types": ["dates", "measurements", "references", "specifications", "people", "locations"]
+        }
+    }
+
+@app.get("/api/documents/{doc_id}/similar")
+async def get_similar_documents(doc_id: str):
+    """Get similar documents to a given document"""
+    try:
+        similar = enhanced_search.get_similar_documents(doc_id, max_results=5)
+        return {
+            "similar_documents": similar,
+            "total": len(similar)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/documents/{doc_id}/analysis")
+async def get_document_analysis(doc_id: str):
+    """Get detailed analysis of a document"""
+    if doc_id not in documents_db:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    if doc_id not in enhanced_search.processed_docs:
+        raise HTTPException(status_code=404, detail="Document not processed")
+    
+    processed = enhanced_search.processed_docs[doc_id]
+    original = documents_db[doc_id]
+    
+    return {
+        "document_id": doc_id,
+        "title": original["title"],
+        "analysis": {
+            "categories": processed.get('categories', []),
+            "tags": processed.get('tags', []),
+            "summary": processed.get('summary', ''),
+            "extracted_data": processed.get('extracted_data', {}),
+            "word_count": processed.get('word_count', 0),
+            "processing_stats": {
+                "dates_found": len(processed.get('extracted_data', {}).get('dates', [])),
+                "references_found": len(processed.get('extracted_data', {}).get('references', [])),
+                "specifications_found": len(processed.get('extracted_data', {}).get('specifications', [])),
+                "measurements_found": len(processed.get('extracted_data', {}).get('measurements', []))
+            }
+        }
     }
 
 if __name__ == "__main__":
