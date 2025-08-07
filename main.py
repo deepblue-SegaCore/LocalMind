@@ -341,8 +341,8 @@ async def home():
                             '<h3 class="text-2xl font-bold text-white mb-4">🔍 Search Results (' + data.total + ')</h3>' +
                             data.results.map(function(r) {
                                 return '<div class="bg-white rounded-lg p-4 shadow hover:shadow-lg transition">' +
-                                    '<h4 class="font-bold text-lg mb-2">' + r.title + '</h4>' +
-                                    '<p class="text-gray-600 mb-2">' + r.content.substring(0, 300) + '...</p>' +
+                                    '<h4 class="font-bold text-lg mb-2">' + (r.title || 'Untitled') + '</h4>' +
+                                    '<p class="text-gray-600 mb-2">' + (r.content || '').substring(0, 300) + '...</p>' +
                                     '<div class="flex justify-between items-center text-sm text-gray-500">' +
                                         '<span>Type: ' + (r.type || (r.metadata && r.metadata.type) || 'Unknown') + '</span>' +
                                         '<span>Score: ' + (r.score || 0).toFixed(3) + '</span>' +
@@ -350,21 +350,19 @@ async def home():
                                 '</div>';
                             }).join('');
                     } else {
-                        resultsDiv.innerHTML = `
-                            <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded">
-                                <p class="font-bold">No results found</p>
-                                <p>Try different keywords or upload some documents first.</p>
-                            </div>
-                        `;
+                        resultsDiv.innerHTML = 
+                            '<div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded">' +
+                                '<p class="font-bold">No results found</p>' +
+                                '<p>Try different keywords or upload some documents first.</p>' +
+                            '</div>';
                     }
                 } catch (error) {
                     console.error('Search error:', error);
-                    document.getElementById('results').innerHTML = `
-                        <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded">
-                            <p class="font-bold">Search Error</p>
-                            <p>${error.message}</p>
-                        </div>
-                    `;
+                    document.getElementById('results').innerHTML = 
+                        '<div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded">' +
+                            '<p class="font-bold">Search Error</p>' +
+                            '<p>' + (error.message || 'Unknown error') + '</p>' +
+                        '</div>';
                 }
             }
             
@@ -429,7 +427,7 @@ async def home():
                     loadDocuments();
                 } catch (error) {
                     console.error('Upload error:', error);
-                    alert('Upload failed: ' + error.message);
+                    alert('Upload failed: ' + (error.message || 'Unknown error'));
                 }
             }
             
@@ -438,24 +436,23 @@ async def home():
                     const response = await fetch('/api/stats');
                     const data = await response.json();
                     
-                    document.getElementById('stats').innerHTML = `
-                        <div class="text-center">
-                            <div class="text-2xl font-bold text-blue-600">${data.total_documents}</div>
-                            <div class="text-sm text-gray-600">Documents</div>
-                        </div>
-                        <div class="text-center">
-                            <div class="text-2xl font-bold text-green-600">${data.total_searches}</div>
-                            <div class="text-sm text-gray-600">Searches</div>
-                        </div>
-                        <div class="text-center">
-                            <div class="text-2xl font-bold text-purple-600">${Math.round(data.storage_used_kb)}</div>
-                            <div class="text-sm text-gray-600">KB Used</div>
-                        </div>
-                        <div class="text-center">
-                            <div class="text-2xl font-bold text-orange-600">${data.unique_terms}</div>
-                            <div class="text-sm text-gray-600">Unique Terms</div>
-                        </div>
-                    `;
+                    document.getElementById('stats').innerHTML = 
+                        '<div class="text-center">' +
+                            '<div class="text-2xl font-bold text-blue-600">' + data.total_documents + '</div>' +
+                            '<div class="text-sm text-gray-600">Documents</div>' +
+                        '</div>' +
+                        '<div class="text-center">' +
+                            '<div class="text-2xl font-bold text-green-600">' + data.total_searches + '</div>' +
+                            '<div class="text-sm text-gray-600">Searches</div>' +
+                        '</div>' +
+                        '<div class="text-center">' +
+                            '<div class="text-2xl font-bold text-purple-600">' + Math.round(data.storage_used_kb) + '</div>' +
+                            '<div class="text-sm text-gray-600">KB Used</div>' +
+                        '</div>' +
+                        '<div class="text-center">' +
+                            '<div class="text-2xl font-bold text-orange-600">' + data.unique_terms + '</div>' +
+                            '<div class="text-sm text-gray-600">Unique Terms</div>' +
+                        '</div>';
                 } catch (error) {
                     console.error('Stats error:', error);
                 }
