@@ -1,0 +1,561 @@
+# main.py - Fixed version with working upload
+"""
+LocalMind - Fixed Upload Version for Replit
+Complete working implementation with file upload
+"""
+
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+import json
+import hashlib
+from datetime import datetime
+import io
+
+app = FastAPI(title="LocalMind - Personal Knowledge Assistant")
+
+# Enable CORS for all origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# In-memory document storage
+documents_db = {}
+search_history = []
+
+class SearchRequest(BaseModel):
+    query: str
+    include_web: bool = False
+    max_results: int = 10
+
+# Enhanced HTML with working upload
+HTML_CONTENT = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧠 LocalMind - Personal Knowledge Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .upload-area {
+            border: 2px dashed #cbd5e0;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-5xl font-bold text-white mb-2">🧠 LocalMind</h1>
+            <p class="text-white/90 text-lg">Personal Knowledge Assistant - Replit Edition</p>
+        </div>
+
+        <!-- Search Section -->
+        <div class="bg-white rounded-xl shadow-xl p-6 mb-6">
+            <div class="flex gap-4">
+                <input 
+                    type="text" 
+                    id="searchInput"
+                    placeholder="Search your documents..."
+                    class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    onkeypress="if(event.key === 'Enter') performSearch()"
+                >
+                <button 
+                    onclick="performSearch()"
+                    class="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition font-semibold"
+                >
+                    🔍 Search
+                </button>
+            </div>
+            
+            <div class="mt-4 flex items-center gap-4">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="includeWeb" class="rounded">
+                    <span class="text-gray-700">Include web results</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="grid md:grid-cols-3 gap-6 mb-6">
+            <!-- Upload Section -->
+            <div class="bg-white rounded-xl shadow-xl p-6">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">📄 Document Upload</h3>
+                <div 
+                    id="uploadArea"
+                    class="upload-area rounded-lg p-8 text-center cursor-pointer"
+                    onclick="document.getElementById('fileInput').click()"
+                    ondrop="handleDrop(event)"
+                    ondragover="handleDragOver(event)"
+                    ondragleave="handleDragLeave(event)"
+                >
+                    <svg class="w-12 h-12 mx-auto mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <p class="text-gray-600 mb-2">Drop files here or click to browse</p>
+                    <p class="text-sm text-gray-500">TXT, JSON, MD, CSV (Max 10MB)</p>
+                    <input 
+                        type="file" 
+                        id="fileInput" 
+                        class="hidden" 
+                        accept=".txt,.json,.md,.csv"
+                        onchange="handleFileSelect(event)"
+                        multiple
+                    >
+                </div>
+                <div id="uploadStatus" class="mt-4"></div>
+            </div>
+
+            <!-- Smart Search Info -->
+            <div class="bg-white rounded-xl shadow-xl p-6">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">🔍 Smart Search</h3>
+                <p class="text-gray-600 mb-4">AI-powered semantic search across your knowledge base</p>
+                <div id="searchStats" class="space-y-2 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">Documents:</span>
+                        <span id="docCount" class="font-semibold">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">Total searches:</span>
+                        <span id="searchCount" class="font-semibold">0</span>
+                    </div>
+                </div>
+                <button 
+                    onclick="loadStats()"
+                    class="mt-4 w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                >
+                    Refresh Stats
+                </button>
+            </div>
+
+            <!-- Recent Documents -->
+            <div class="bg-white rounded-xl shadow-xl p-6">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">📚 Recent Documents</h3>
+                <div id="recentDocs" class="space-y-2">
+                    <p class="text-gray-500 text-sm">No documents yet</p>
+                </div>
+                <button 
+                    onclick="loadDocuments()"
+                    class="mt-4 w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                >
+                    View All Documents
+                </button>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultsSection" class="hidden">
+            <div class="bg-white rounded-xl shadow-xl p-6">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">Search Results</h3>
+                <div id="searchResults" class="space-y-4"></div>
+            </div>
+        </div>
+
+        <!-- Documents List -->
+        <div id="documentsSection" class="hidden">
+            <div class="bg-white rounded-xl shadow-xl p-6">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">All Documents</h3>
+                <div id="documentsList" class="space-y-4"></div>
+            </div>
+        </div>
+
+        <!-- Status Messages -->
+        <div id="statusMessage" class="fixed bottom-4 right-4 hidden"></div>
+    </div>
+
+    <script>
+        // File Upload Handling
+        function handleFileSelect(event) {
+            const files = event.target.files;
+            if (files.length > 0) {
+                uploadFiles(files);
+            }
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            document.getElementById('uploadArea').classList.remove('dragover');
+            
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                uploadFiles(files);
+            }
+        }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            document.getElementById('uploadArea').classList.add('dragover');
+        }
+
+        function handleDragLeave(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            document.getElementById('uploadArea').classList.remove('dragover');
+        }
+
+        async function uploadFiles(files) {
+            const statusDiv = document.getElementById('uploadStatus');
+            statusDiv.innerHTML = '<div class="text-blue-600">Uploading...</div>';
+            
+            for (let file of files) {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                try {
+                    const response = await fetch('/api/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        showStatus(`✅ Uploaded: ${file.name}`, 'success');
+                        loadStats();
+                        loadDocuments();
+                    } else {
+                        const error = await response.json();
+                        showStatus(`❌ Failed: ${file.name} - ${error.detail}`, 'error');
+                    }
+                } catch (error) {
+                    showStatus(`❌ Error uploading ${file.name}: ${error.message}`, 'error');
+                }
+            }
+            
+            statusDiv.innerHTML = '';
+            // Reset file input
+            document.getElementById('fileInput').value = '';
+        }
+
+        // Search Functionality
+        async function performSearch() {
+            const query = document.getElementById('searchInput').value;
+            if (!query.trim()) return;
+            
+            const includeWeb = document.getElementById('includeWeb').checked;
+            
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        query: query,
+                        include_web: includeWeb,
+                        max_results: 10
+                    })
+                });
+                
+                const data = await response.json();
+                displaySearchResults(data.results);
+                loadStats();
+            } catch (error) {
+                showStatus('Search failed: ' + error.message, 'error');
+            }
+        }
+
+        function displaySearchResults(results) {
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsDiv = document.getElementById('searchResults');
+            
+            if (results.length === 0) {
+                resultsDiv.innerHTML = '<p class="text-gray-500">No results found</p>';
+            } else {
+                resultsDiv.innerHTML = results.map(result => `
+                    <div class="border-l-4 border-purple-500 pl-4 py-2">
+                        <h4 class="font-semibold text-gray-800">${result.title}</h4>
+                        <p class="text-gray-600 text-sm mt-1">${result.content.substring(0, 200)}...</p>
+                        <div class="flex gap-4 mt-2 text-xs text-gray-500">
+                            <span>Type: ${result.type}</span>
+                            ${result.score ? `<span>Score: ${result.score.toFixed(3)}</span>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+            }
+            
+            resultsSection.classList.remove('hidden');
+            document.getElementById('documentsSection').classList.add('hidden');
+        }
+
+        // Load Documents
+        async function loadDocuments() {
+            try {
+                const response = await fetch('/api/documents');
+                const data = await response.json();
+                
+                const docsSection = document.getElementById('documentsSection');
+                const docsList = document.getElementById('documentsList');
+                const recentDocs = document.getElementById('recentDocs');
+                
+                if (data.documents.length === 0) {
+                    docsList.innerHTML = '<p class="text-gray-500">No documents uploaded yet</p>';
+                    recentDocs.innerHTML = '<p class="text-gray-500 text-sm">No documents yet</p>';
+                } else {
+                    // All documents
+                    docsList.innerHTML = data.documents.map(doc => `
+                        <div class="border rounded-lg p-3 hover:bg-gray-50">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <h4 class="font-semibold">${doc.title}</h4>
+                                    <p class="text-sm text-gray-500">
+                                        Type: ${doc.type} | 
+                                        ID: ${doc.id}
+                                    </p>
+                                </div>
+                                <button 
+                                    onclick="deleteDocument('${doc.id}')"
+                                    class="text-red-500 hover:text-red-700 text-sm"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                    
+                    // Recent documents (first 3)
+                    const recent = data.documents.slice(0, 3);
+                    recentDocs.innerHTML = recent.map(doc => `
+                        <div class="text-sm">
+                            <span class="font-medium">${doc.title}</span>
+                        </div>
+                    `).join('');
+                }
+                
+                docsSection.classList.remove('hidden');
+                document.getElementById('resultsSection').classList.add('hidden');
+            } catch (error) {
+                showStatus('Failed to load documents', 'error');
+            }
+        }
+
+        // Delete Document
+        async function deleteDocument(docId) {
+            if (!confirm('Delete this document?')) return;
+            
+            try {
+                const response = await fetch(`/api/documents/${docId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    showStatus('Document deleted', 'success');
+                    loadDocuments();
+                    loadStats();
+                }
+            } catch (error) {
+                showStatus('Failed to delete document', 'error');
+            }
+        }
+
+        // Load Statistics
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                
+                document.getElementById('docCount').textContent = stats.total_documents;
+                document.getElementById('searchCount').textContent = stats.total_searches;
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        // Show Status Message
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.className = `fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg ${
+                type === 'success' ? 'bg-green-500' : 'bg-red-500'
+            } text-white`;
+            statusDiv.textContent = message;
+            statusDiv.classList.remove('hidden');
+            
+            setTimeout(() => {
+                statusDiv.classList.add('hidden');
+            }, 3000);
+        }
+
+        // Initialize on page load
+        window.onload = function() {
+            loadStats();
+            loadDocuments();
+        };
+    </script>
+</body>
+</html>
+"""
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    """Serve the main application"""
+    return HTML_CONTENT
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "message": "LocalMind is running",
+        "documents_count": len(documents_db)
+    }
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Handle file upload"""
+    try:
+        # Check file size
+        contents = await file.read()
+        if len(contents) > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+        
+        # Generate document ID
+        doc_id = hashlib.md5(f"{file.filename}{datetime.now()}".encode()).hexdigest()[:12]
+        
+        # Process based on file type
+        content_str = ""
+        file_type = file.filename.split('.')[-1].lower()
+        
+        if file_type in ['txt', 'md', 'csv']:
+            content_str = contents.decode('utf-8', errors='ignore')
+        elif file_type == 'json':
+            try:
+                json_data = json.loads(contents)
+                content_str = json.dumps(json_data, indent=2)
+            except:
+                content_str = contents.decode('utf-8', errors='ignore')
+        else:
+            content_str = contents.decode('utf-8', errors='ignore')
+        
+        # Store document
+        documents_db[doc_id] = {
+            "id": doc_id,
+            "title": file.filename,
+            "content": content_str,
+            "type": file_type,
+            "size": len(contents),
+            "uploaded_at": datetime.now().isoformat()
+        }
+        
+        return {
+            "message": "File uploaded successfully",
+            "document": {
+                "id": doc_id,
+                "title": file.filename,
+                "type": file_type,
+                "size": len(contents)
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/search")
+async def search(request: SearchRequest):
+    """Search documents"""
+    try:
+        results = []
+        query_lower = request.query.lower()
+        
+        # Search through documents
+        for doc_id, doc in documents_db.items():
+            if query_lower in doc["content"].lower() or query_lower in doc["title"].lower():
+                # Calculate simple relevance score
+                title_score = doc["title"].lower().count(query_lower) * 2
+                content_score = doc["content"].lower().count(query_lower)
+                total_score = (title_score + content_score) / (len(doc["content"]) / 100)
+                
+                results.append({
+                    "id": doc["id"],
+                    "title": doc["title"],
+                    "content": doc["content"][:300],
+                    "type": doc["type"],
+                    "score": min(total_score, 1.0)
+                })
+        
+        # Sort by score
+        results.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Add to search history
+        search_history.append({
+            "query": request.query,
+            "timestamp": datetime.now().isoformat(),
+            "results_count": len(results)
+        })
+        
+        # Mock web results if requested
+        if request.include_web:
+            results.append({
+                "id": "web1",
+                "title": f"Web: {request.query} - Wikipedia",
+                "content": f"Information about {request.query} from web sources...",
+                "type": "web",
+                "score": 0.5
+            })
+        
+        return {
+            "results": results[:request.max_results],
+            "total": len(results),
+            "query_analysis": {
+                "query": request.query,
+                "terms": request.query.split()
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/documents")
+async def list_documents():
+    """List all documents"""
+    docs = list(documents_db.values())
+    docs.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    
+    return {
+        "documents": docs,
+        "total": len(docs)
+    }
+
+@app.delete("/api/documents/{doc_id}")
+async def delete_document(doc_id: str):
+    """Delete a document"""
+    if doc_id not in documents_db:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    del documents_db[doc_id]
+    return {"message": "Document deleted successfully"}
+
+@app.get("/api/stats")
+async def get_stats():
+    """Get application statistics"""
+    return {
+        "total_documents": len(documents_db),
+        "total_searches": len(search_history),
+        "recent_searches": search_history[-5:][::-1] if search_history else [],
+        "storage_used_kb": sum(doc["size"] for doc in documents_db.values()) / 1024 if documents_db else 0
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
