@@ -146,8 +146,15 @@ class SimpleDocumentProcessor:
         """Process plain text files"""
         try:
             content = file_content.decode('utf-8')
-        except:
-            content = file_content.decode('latin-1')
+        except UnicodeDecodeError:
+            try:
+                content = file_content.decode('latin-1')
+            except:
+                content = file_content.decode('utf-8', errors='replace')
+        
+        # Validate content
+        if not content.strip():
+            raise ValueError("File appears to be empty or contains no readable text")
         
         return {
             "title": filename,
@@ -156,7 +163,8 @@ class SimpleDocumentProcessor:
             "metadata": {
                 "filename": filename,
                 "size_bytes": len(file_content),
-                "line_count": len(content.split('\n'))
+                "line_count": len(content.split('\n')),
+                "char_count": len(content)
             }
         }
     
@@ -370,6 +378,23 @@ async def home():
                     return;
                 }
                 
+                // Validate files before upload
+                const maxSize = 5 * 1024 * 1024; // 5MB
+                const allowedTypes = ['.txt', '.json', '.md'];
+                
+                for (let file of files) {
+                    if (file.size > maxSize) {
+                        alert(`File "${file.name}" is too large (max 5MB)`);
+                        return;
+                    }
+                    
+                    const ext = '.' + file.name.split('.').pop().toLowerCase();
+                    if (!allowedTypes.includes(ext)) {
+                        alert(`File "${file.name}" has unsupported type. Allowed: ${allowedTypes.join(', ')}`);
+                        return;
+                    }
+                }
+                
                 const formData = new FormData();
                 for (let file of files) {
                     formData.append('files', file);
@@ -381,10 +406,28 @@ async def home():
                         body: formData
                     });
                     
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Upload failed');
+                    }
+                    
                     const data = await response.json();
-                    alert(`Uploaded: ${data.total_processed} files, Failed: ${data.total_failed} files`);
+                    
+                    let message = `✅ Uploaded: ${data.total_processed} files`;
+                    if (data.total_failed > 0) {
+                        message += `\n❌ Failed: ${data.total_failed} files`;
+                        if (data.failed.length > 0) {
+                            message += '\n\nErrors:';
+                            data.failed.forEach(f => {
+                                message += `\n• ${f.filename}: ${f.error}`;
+                            });
+                        }
+                    }
+                    alert(message);
+                    
                     fileInput.value = '';
                     loadStats();
+                    loadDocuments();
                 } catch (error) {
                     console.error('Upload error:', error);
                     alert('Upload failed: ' + error.message);
@@ -525,11 +568,33 @@ async def search(request: SearchRequest):
 async def upload_file(file: UploadFile = File(...)):
     """Enhanced file upload with processing"""
     try:
-        # Check file size (Replit limitation)
-        if file.size and file.size > 10 * 1024 * 1024:  # 10MB limit for Replit
-            raise HTTPException(status_code=413, detail="File too large for Replit (max 10MB)")
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file selected")
         
-        # Process the file
+        # Read file content first to check size
+        content = await file.read()
+        file_size = len(content)
+        
+        # Check file size (Replit limitation - 5MB for stability)
+        if file_size > 5 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large (max 5MB)")
+        
+        # Check if file is empty
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="File is empty")
+        
+        # Validate file extension
+        allowed_extensions = ['.txt', '.json', '.md']
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=415, 
+                detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+            )
+        
+        # Reset file position and process
+        await file.seek(0)
         processed = await processor.process_file(file)
         
         # Generate document ID
@@ -552,8 +617,10 @@ async def upload_file(file: UploadFile = File(...)):
                 "metadata": processed["metadata"]
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @app.get("/api/documents")
 async def list_documents(skip: int = 0, limit: int = 50):
@@ -606,11 +673,48 @@ async def get_stats():
 @app.post("/api/bulk_upload")
 async def bulk_upload(files: List[UploadFile] = File(...)):
     """Upload multiple files at once"""
+    if not files or len(files) == 0:
+        raise HTTPException(status_code=400, detail="No files provided")
+    
+    # Limit number of files for Replit
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="Too many files (max 10 at once)")
+    
     results = []
     errors = []
     
     for file in files:
         try:
+            # Skip if no filename
+            if not file.filename:
+                errors.append({
+                    "filename": "unknown",
+                    "status": "error",
+                    "error": "No filename provided"
+                })
+                continue
+            
+            # Check file size first
+            content = await file.read()
+            if len(content) > 5 * 1024 * 1024:  # 5MB limit
+                errors.append({
+                    "filename": file.filename,
+                    "status": "error",
+                    "error": "File too large (max 5MB)"
+                })
+                continue
+            
+            if len(content) == 0:
+                errors.append({
+                    "filename": file.filename,
+                    "status": "error",
+                    "error": "File is empty"
+                })
+                continue
+            
+            # Reset file position
+            await file.seek(0)
+            
             # Process each file
             processed = await processor.process_file(file)
             doc_id = hashlib.md5(f"{file.filename}{datetime.now()}".encode()).hexdigest()[:12]
@@ -625,11 +729,12 @@ async def bulk_upload(files: List[UploadFile] = File(...)):
             results.append({
                 "filename": file.filename,
                 "status": "success",
-                "doc_id": doc_id
+                "doc_id": doc_id,
+                "size_kb": round(len(content) / 1024, 2)
             })
         except Exception as e:
             errors.append({
-                "filename": file.filename,
+                "filename": file.filename or "unknown",
                 "status": "error",
                 "error": str(e)
             })
@@ -638,7 +743,8 @@ async def bulk_upload(files: List[UploadFile] = File(...)):
         "successful": results,
         "failed": errors,
         "total_processed": len(results),
-        "total_failed": len(errors)
+        "total_failed": len(errors),
+        "message": f"Processed {len(results)} files successfully, {len(errors)} failed"
     }
 
 # Add sample documents on startup
