@@ -1,0 +1,240 @@
+# integration.py
+"""
+Simple integration file to add enhanced search to your existing LocalMind
+Add this to your project and update main.py
+"""
+
+# Add these imports to your main.py
+from enhanced_search import EnhancedDocumentProcessor, EnhancedSearchEngine
+
+# Update your main.py with these changes:
+
+# 1. Replace your document store initialization with:
+processor = EnhancedDocumentProcessor()
+search_engine = EnhancedSearchEngine(processor)
+
+# Keep your existing documents_db for backward compatibility
+documents_db = {}
+
+# 2. Update your upload endpoint:
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Enhanced file upload with better processing"""
+    try:
+        contents = await file.read()
+        if len(contents) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+        
+        # Generate document ID
+        doc_id = hashlib.md5(f"{file.filename}{datetime.now()}".encode()).hexdigest()[:12]
+        
+        # Decode content
+        content_str = contents.decode('utf-8', errors='ignore')
+        
+        # Add to enhanced search engine
+        processed = search_engine.add_document(
+            doc_id=doc_id,
+            content=content_str,
+            filename=file.filename
+        )
+        
+        # Also keep in documents_db for compatibility
+        documents_db[doc_id] = {
+            "id": doc_id,
+            "title": file.filename,
+            "content": content_str,
+            "type": file.filename.split('.')[-1].lower(),
+            "size": len(contents),
+            "uploaded_at": datetime.now().isoformat(),
+            "processed_data": processed  # Add processed data
+        }
+        
+        return {
+            "message": "File uploaded and processed successfully",
+            "document": {
+                "id": doc_id,
+                "title": file.filename,
+                "categories": processed.get('categories', []),
+                "tags": processed.get('tags', [])[:5],
+                "extracted": {
+                    "dates": processed['extracted_data'].get('dates', [])[:3],
+                    "references": processed['extracted_data'].get('references', [])[:3],
+                    "specifications": processed['extracted_data'].get('specifications', [])[:3]
+                }
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 3. Update your search endpoint:
+@app.post("/api/search")
+async def search(request: SearchRequest):
+    """Enhanced search with better ranking"""
+    try:
+        # Use enhanced search engine
+        results = search_engine.search(request.query, request.max_results)
+        
+        # Add to search history
+        search_history.append({
+            "query": request.query,
+            "timestamp": datetime.now().isoformat(),
+            "results_count": len(results)
+        })
+        
+        return {
+            "results": results,
+            "total": len(results),
+            "query_analysis": {
+                "query": request.query,
+                "terms": request.query.split(),
+                "expanded": list(processor.abbreviations.get(word, word) 
+                                for word in request.query.lower().split())
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 4. Add new endpoint for similar documents:
+@app.get("/api/documents/{doc_id}/similar")
+async def get_similar_documents(doc_id: str, max_results: int = 5):
+    """Find similar documents"""
+    similar = search_engine.get_similar_documents(doc_id, max_results)
+    return {"similar_documents": similar}
+
+# 5. Add new endpoint for document analysis:
+@app.get("/api/documents/{doc_id}/analysis")
+async def analyze_document(doc_id: str):
+    """Get detailed analysis of a document"""
+    if doc_id not in search_engine.processed_docs:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    processed = search_engine.processed_docs[doc_id]
+    doc_info = search_engine.documents[doc_id]
+    
+    return {
+        "document": {
+            "id": doc_id,
+            "filename": doc_info['filename'],
+            "added_at": doc_info['added_at']
+        },
+        "analysis": {
+            "categories": processed.get('categories', []),
+            "tags": processed.get('tags', []),
+            "summary": processed.get('summary', ''),
+            "word_count": processed.get('word_count', 0),
+            "extracted_data": processed.get('extracted_data', {})
+        }
+    }
+
+# 6. Update stats endpoint:
+@app.get("/api/stats")
+async def get_stats():
+    """Enhanced statistics"""
+    # Category distribution
+    category_dist = defaultdict(int)
+    for doc in search_engine.processed_docs.values():
+        for cat in doc.get('categories', []):
+            category_dist[cat] += 1
+    
+    # Most common tags
+    all_tags = []
+    for doc in search_engine.processed_docs.values():
+        all_tags.extend(doc.get('tags', []))
+    
+    tag_freq = Counter(all_tags).most_common(10)
+    
+    return {
+        "total_documents": len(documents_db),
+        "total_searches": len(search_history),
+        "recent_searches": search_history[-5:][::-1] if search_history else [],
+        "storage_used_kb": sum(doc["size"] for doc in documents_db.values()) / 1024 if documents_db else 0,
+        "category_distribution": dict(category_dist),
+        "popular_tags": tag_freq,
+        "document_types": Counter(doc["type"] for doc in documents_db.values())
+    }
+
+# ============================================
+# SIMPLE MIGRATION SCRIPT
+# ============================================
+
+def migrate_existing_documents():
+    """
+    Run this once to migrate your existing documents to enhanced search
+    Add this function call in your startup event
+    """
+    print("Migrating existing documents to enhanced search...")
+    
+    for doc_id, doc in documents_db.items():
+        if doc_id not in search_engine.documents:
+            search_engine.add_document(
+                doc_id=doc_id,
+                content=doc.get('content', ''),
+                filename=doc.get('title', doc.get('filename', 'unknown'))
+            )
+    
+    print(f"Migrated {len(documents_db)} documents")
+
+# Add to your startup event:
+@app.on_event("startup")
+async def startup_event():
+    """Enhanced startup with migration"""
+    # Your existing startup code...
+    
+    # Migrate any existing documents
+    if documents_db:
+        migrate_existing_documents()
+    
+    print(f"✅ LocalMind started with {len(documents_db)} documents")
+
+# ============================================
+# QUICK TEST FUNCTIONS
+# ============================================
+
+def test_enhanced_search():
+    """Test function to verify enhanced search is working"""
+    # Add a test document
+    test_doc = """
+    Construction Safety Report
+    Date: 2024-12-15
+    Project: Building A Foundation
+    
+    Concrete specifications: 3000 PSI required for foundation.
+    Reference Drawing: DWG-A-101
+    Temperature during pour: 75°F
+    
+    Safety requirements per OSHA standards.
+    All workers must wear PPE including hard hats.
+    """
+    
+    doc_id = "test_001"
+    processed = search_engine.add_document(doc_id, test_doc, "safety_report.txt")
+    
+    print("Document processed:")
+    print(f"  Categories: {processed['categories']}")
+    print(f"  Tags: {processed['tags'][:5]}")
+    print(f"  Dates found: {processed['extracted_data']['dates']}")
+    print(f"  Measurements: {processed['extracted_data']['measurements'][:3]}")
+    
+    # Test search
+    results = search_engine.search("concrete foundation", 5)
+    print(f"\nSearch results for 'concrete foundation': {len(results)} found")
+    for r in results:
+        print(f"  - {r['title']} (score: {r['score']})")
+
+# ============================================
+# REQUIREMENTS TO ADD
+# ============================================
+"""
+Add these to your requirements.txt if not already present:
+
+fastapi
+uvicorn
+python-multipart
+pydantic
+aiofiles
+
+No additional heavy dependencies needed!
+The enhanced search works with Python standard library.
+"""
