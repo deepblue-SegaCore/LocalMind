@@ -7,3 +7,5 @@ scikit-learn
 numpy
 aiofiles
 sentence-transformers
+pypdf2
+python-docx
