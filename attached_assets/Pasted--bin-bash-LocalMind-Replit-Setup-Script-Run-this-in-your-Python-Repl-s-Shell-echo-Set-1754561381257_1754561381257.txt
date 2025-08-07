@@ -1,0 +1,369 @@
+#!/bin/bash
+# LocalMind Replit Setup Script
+# Run this in your Python Repl's Shell
+
+echo "🚀 Setting up LocalMind on Replit..."
+echo "=================================="
+
+# Step 1: Install Python dependencies
+echo "📦 Installing Python packages..."
+pip install fastapi uvicorn python-multipart pydantic chromadb langchain duckduckgo-search aiofiles
+
+# Step 2: Install Node.js in Python Repl
+echo "📦 Installing Node.js in Python Repl..."
+npm init -y
+
+# Step 3: Create project structure
+echo "📁 Creating project structure..."
+
+# Create directories
+mkdir -p backend/core backend/api backend/database
+mkdir -p frontend-build
+mkdir -p static/css static/js
+mkdir -p documents/samples
+mkdir -p templates
+
+# Step 4: Create package.json for frontend build
+cat > package.json << 'EOF'
+{
+  "name": "localmind-replit",
+  "version": "1.0.0",
+  "scripts": {
+    "build-frontend": "cd frontend && npm run build && cp -r dist/* ../static/",
+    "setup": "npm install",
+    "start": "python main.py"
+  },
+  "dependencies": {
+    "vite": "^5.0.11",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}
+EOF
+
+# Step 5: Create main.py for Replit
+cat > main.py << 'EOF'
+"""
+LocalMind - Replit Version
+Simplified for Replit deployment
+"""
+
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional
+import json
+import os
+from pathlib import Path
+
+# Create FastAPI app
+app = FastAPI(title="LocalMind Replit")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files (for frontend)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Mock database for Replit
+MOCK_DOCUMENTS = []
+MOCK_SEARCHES = []
+
+class SearchRequest(BaseModel):
+    query: str
+    include_web: bool = False
+    max_results: int = 10
+
+class Document(BaseModel):
+    id: str
+    title: str
+    content: str
+    type: str
+    metadata: dict
+
+@app.get("/")
+async def serve_frontend():
+    """Serve the frontend"""
+    # In production, serve the built React app
+    # For now, return a simple HTML page
+    return FileResponse("templates/index.html")
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "message": "LocalMind Replit is running"}
+
+@app.post("/api/search")
+async def search(request: SearchRequest):
+    """Mock search endpoint"""
+    # Simulate search results
+    mock_results = [
+        {
+            "id": "1",
+            "title": "Sample Document 1",
+            "content": f"Content matching '{request.query}'...",
+            "type": "pdf",
+            "source": "local",
+            "metadata": {"size": "2.4 MB", "modified": "2024-12-01"}
+        },
+        {
+            "id": "2",
+            "title": "Sample Document 2",
+            "content": f"Another result for '{request.query}'...",
+            "type": "docx",
+            "source": "local",
+            "metadata": {"size": "1.2 MB", "modified": "2024-12-02"}
+        }
+    ]
+    
+    # Add to search history
+    MOCK_SEARCHES.append(request.query)
+    
+    return {
+        "results": mock_results[:request.max_results],
+        "total": len(mock_results),
+        "query_analysis": {
+            "intent": "search",
+            "keywords": request.query.split(),
+            "needs_web": request.include_web
+        }
+    }
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Mock file upload"""
+    # Save file info (not actual file due to Replit limitations)
+    doc = {
+        "id": str(len(MOCK_DOCUMENTS) + 1),
+        "title": file.filename,
+        "content": f"Content of {file.filename}",
+        "type": file.filename.split(".")[-1],
+        "metadata": {
+            "size": f"{file.size / 1024:.1f} KB" if file.size else "Unknown",
+            "uploaded": "Just now"
+        }
+    }
+    
+    MOCK_DOCUMENTS.append(doc)
+    
+    return {
+        "message": "File uploaded successfully",
+        "document": doc
+    }
+
+@app.get("/api/documents")
+async def list_documents():
+    """List all documents"""
+    return {
+        "documents": MOCK_DOCUMENTS,
+        "total": len(MOCK_DOCUMENTS)
+    }
+
+@app.get("/api/stats")
+async def get_stats():
+    """Get system statistics"""
+    return {
+        "total_documents": len(MOCK_DOCUMENTS),
+        "total_searches": len(MOCK_SEARCHES),
+        "storage_used": f"{len(MOCK_DOCUMENTS) * 2.5:.1f} MB",
+        "model_status": "Simulated (Replit Mode)",
+        "last_indexed": "Just now"
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    # Replit uses port from environment
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+EOF
+
+# Step 6: Create simple HTML template
+cat > templates/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalMind - Replit Version</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div id="root">
+        <div class="min-h-screen">
+            <header class="bg-white shadow-sm border-b">
+                <div class="max-w-7xl mx-auto px-4 py-4">
+                    <h1 class="text-2xl font-bold">🧠 LocalMind (Replit Mode)</h1>
+                </div>
+            </header>
+            
+            <main class="max-w-7xl mx-auto px-4 py-8">
+                <div class="bg-white rounded-lg shadow p-6 mb-6">
+                    <h2 class="text-xl font-semibold mb-4">Quick Start</h2>
+                    <p class="text-gray-600 mb-4">
+                        This is the Replit version of LocalMind. Core features are simulated for testing.
+                    </p>
+                    <div class="flex gap-4">
+                        <button onclick="testSearch()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                            Test Search
+                        </button>
+                        <button onclick="testUpload()" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                            Test Upload
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="results" class="space-y-4"></div>
+            </main>
+        </div>
+    </div>
+    
+    <script>
+        async function testSearch() {
+            const response = await fetch('/api/search', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    query: 'test search',
+                    include_web: false
+                })
+            });
+            const data = await response.json();
+            
+            document.getElementById('results').innerHTML = `
+                <div class="bg-white rounded-lg shadow p-4">
+                    <h3 class="font-semibold mb-2">Search Results</h3>
+                    <pre class="text-sm bg-gray-100 p-2 rounded">${JSON.stringify(data, null, 2)}</pre>
+                </div>
+            `;
+        }
+        
+        async function testUpload() {
+            const formData = new FormData();
+            const blob = new Blob(['test content'], {type: 'text/plain'});
+            formData.append('file', blob, 'test.txt');
+            
+            const response = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            
+            document.getElementById('results').innerHTML = `
+                <div class="bg-white rounded-lg shadow p-4">
+                    <h3 class="font-semibold mb-2">Upload Result</h3>
+                    <pre class="text-sm bg-gray-100 p-2 rounded">${JSON.stringify(data, null, 2)}</pre>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
+EOF
+
+# Step 7: Create .replit config
+cat > .replit << 'EOF'
+run = "python main.py"
+language = "python3"
+
+[nix]
+channel = "stable-21_05"
+
+[env]
+VIRTUAL_ENV = "/home/runner/${REPL_SLUG}/venv"
+PATH = "${VIRTUAL_ENV}/bin"
+
+[packager]
+language = "python3"
+
+[packager.features]
+packageSearch = true
+guessImports = true
+
+[[ports]]
+localPort = 8000
+externalPort = 80
+EOF
+
+# Step 8: Create README for Replit
+cat > README_REPLIT.md << 'EOF'
+# LocalMind - Replit Version
+
+## 🚀 Quick Start
+
+1. Click "Run" to start the application
+2. The web interface will open automatically
+3. Use the test buttons to verify everything works
+
+## 📁 Project Structure
+
+```
+.
+├── main.py           # Main FastAPI application
+├── backend/          # Backend modules (add as needed)
+├── static/           # Frontend static files
+├── templates/        # HTML templates
+└── documents/        # Sample documents
+```
+
+## 🔧 Development Workflow
+
+### Adding Backend Features:
+1. Edit `main.py` or create modules in `backend/`
+2. Replit auto-reloads on save
+
+### Adding Frontend:
+1. Create React components in separate files
+2. Build and copy to `static/` directory
+3. Or edit `templates/index.html` directly
+
+## 🎯 Next Steps
+
+### Phase 1: Test Core Features (Replit)
+- ✅ Search API
+- ✅ Upload API
+- ✅ Document listing
+- ✅ Basic UI
+
+### Phase 2: Add Real Features (Replit)
+- [ ] ChromaDB for vector search
+- [ ] Simple document processing
+- [ ] Enhanced UI with React
+
+### Phase 3: Deploy Locally
+- [ ] Clone to local machine
+- [ ] Add Ollama/GPT integration
+- [ ] Process 50GB dataset
+- [ ] Add IBM Docling
+
+## 💡 Tips
+
+- Replit has limited storage (few GB)
+- Use mock data for testing
+- Focus on UI/UX and API structure
+- Real document processing happens locally
+
+## 🔗 Resources
+
+- [FastAPI Docs](https://fastapi.tiangolo.com)
+- [React Docs](https://react.dev)
+- [Tailwind CSS](https://tailwindcss.com)
+EOF
+
+echo ""
+echo "✅ Setup complete!"
+echo ""
+echo "📋 Next steps:"
+echo "1. Click 'Run' to start the server"
+echo "2. Open the Webview to see your app"
+echo "3. Edit main.py to add features"
+echo "4. Check README_REPLIT.md for more info"
+echo ""
+echo "🎉 Happy coding!"
