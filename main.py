@@ -337,19 +337,18 @@ async def home():
                     
                     const resultsDiv = document.getElementById('results');
                     if (data.results && data.results.length > 0) {
-                        resultsDiv.innerHTML = `
-                            <h3 class="text-2xl font-bold text-white mb-4">🔍 Search Results (${data.total})</h3>
-                            ${data.results.map(r => `
-                                <div class="bg-white rounded-lg p-4 shadow hover:shadow-lg transition">
-                                    <h4 class="font-bold text-lg mb-2">${r.title}</h4>
-                                    <p class="text-gray-600 mb-2">${r.content.substring(0, 300)}...</p>
-                                    <div class="flex justify-between items-center text-sm text-gray-500">
-                                        <span>Type: ${r.type || r.metadata?.type || 'Unknown'}</span>
-                                        <span>Score: ${(r.score || 0).toFixed(3)}</span>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        `;
+                        resultsDiv.innerHTML = 
+                            '<h3 class="text-2xl font-bold text-white mb-4">🔍 Search Results (' + data.total + ')</h3>' +
+                            data.results.map(function(r) {
+                                return '<div class="bg-white rounded-lg p-4 shadow hover:shadow-lg transition">' +
+                                    '<h4 class="font-bold text-lg mb-2">' + r.title + '</h4>' +
+                                    '<p class="text-gray-600 mb-2">' + r.content.substring(0, 300) + '...</p>' +
+                                    '<div class="flex justify-between items-center text-sm text-gray-500">' +
+                                        '<span>Type: ' + (r.type || (r.metadata && r.metadata.type) || 'Unknown') + '</span>' +
+                                        '<span>Score: ' + (r.score || 0).toFixed(3) + '</span>' +
+                                    '</div>' +
+                                '</div>';
+                            }).join('');
                     } else {
                         resultsDiv.innerHTML = `
                             <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded">
@@ -384,13 +383,13 @@ async def home():
                 
                 for (let file of files) {
                     if (file.size > maxSize) {
-                        alert(`File "${file.name}" is too large (max 5MB)`);
+                        alert('File "' + file.name + '" is too large (max 5MB)');
                         return;
                     }
                     
                     const ext = '.' + file.name.split('.').pop().toLowerCase();
                     if (!allowedTypes.includes(ext)) {
-                        alert(`File "${file.name}" has unsupported type. Allowed: ${allowedTypes.join(', ')}`);
+                        alert('File "' + file.name + '" has unsupported type. Allowed: ' + allowedTypes.join(', '));
                         return;
                     }
                 }
@@ -413,13 +412,13 @@ async def home():
                     
                     const data = await response.json();
                     
-                    let message = `✅ Uploaded: ${data.total_processed} files`;
+                    let message = '✅ Uploaded: ' + data.total_processed + ' files';
                     if (data.total_failed > 0) {
-                        message += `\n❌ Failed: ${data.total_failed} files`;
+                        message += '\n❌ Failed: ' + data.total_failed + ' files';
                         if (data.failed.length > 0) {
                             message += '\n\nErrors:';
-                            data.failed.forEach(f => {
-                                message += `\n• ${f.filename}: ${f.error}`;
+                            data.failed.forEach(function(f) {
+                                message += '\n• ' + f.filename + ': ' + f.error;
                             });
                         }
                     }
@@ -469,18 +468,17 @@ async def home():
                     
                     const docsDiv = document.getElementById('documents');
                     if (data.documents && data.documents.length > 0) {
-                        docsDiv.innerHTML = data.documents.map(doc => `
-                            <div class="flex justify-between items-center p-3 bg-gray-50 rounded">
-                                <div>
-                                    <span class="font-medium">${doc.title}</span>
-                                    <span class="text-sm text-gray-500 ml-2">(${doc.metadata?.filename || doc.type})</span>
-                                </div>
-                                <button onclick="deleteDocument('${doc.id}')" 
-                                        class="text-red-500 hover:text-red-700">
-                                    🗑️ Delete
-                                </button>
-                            </div>
-                        `).join('');
+                        docsDiv.innerHTML = data.documents.map(function(doc) {
+                            return '<div class="flex justify-between items-center p-3 bg-gray-50 rounded">' +
+                                '<div>' +
+                                    '<span class="font-medium">' + doc.title + '</span>' +
+                                    '<span class="text-sm text-gray-500 ml-2">(' + ((doc.metadata && doc.metadata.filename) || doc.type) + ')</span>' +
+                                '</div>' +
+                                '<button onclick="deleteDocument(\'' + doc.id + '\')" class="text-red-500 hover:text-red-700">' +
+                                    '🗑️ Delete' +
+                                '</button>' +
+                            '</div>';
+                        }).join('');
                     } else {
                         docsDiv.innerHTML = '<p class="text-gray-500">No documents uploaded yet.</p>';
                     }
@@ -572,7 +570,16 @@ async def upload_file(file: UploadFile = File(...)):
         if not file.filename:
             raise HTTPException(status_code=400, detail="No file selected")
         
-        # Read file content first to check size
+        # Validate file extension first
+        allowed_extensions = ['.txt', '.json', '.md']
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=415, 
+                detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+            )
+        
+        # Read file content
         content = await file.read()
         file_size = len(content)
         
@@ -584,18 +591,24 @@ async def upload_file(file: UploadFile = File(...)):
         if file_size == 0:
             raise HTTPException(status_code=400, detail="File is empty")
         
-        # Validate file extension
-        allowed_extensions = ['.txt', '.json', '.md']
-        file_ext = os.path.splitext(file.filename)[1].lower()
-        if file_ext not in allowed_extensions:
-            raise HTTPException(
-                status_code=415, 
-                detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
-            )
+        # Create a new UploadFile object with the content
+        import io
+        file_obj = io.BytesIO(content)
         
-        # Reset file position and process
-        await file.seek(0)
-        processed = await processor.process_file(file)
+        # Create a mock UploadFile for processing
+        class MockUploadFile:
+            def __init__(self, content, filename):
+                self.file = io.BytesIO(content)
+                self.filename = filename
+                
+            async def read(self):
+                return self.file.getvalue()
+                
+            async def seek(self, position):
+                self.file.seek(position)
+        
+        mock_file = MockUploadFile(content, file.filename)
+        processed = await processor.process_file(mock_file)
         
         # Generate document ID
         doc_id = hashlib.md5(f"{file.filename}{datetime.now()}".encode()).hexdigest()[:12]
@@ -694,6 +707,17 @@ async def bulk_upload(files: List[UploadFile] = File(...)):
                 })
                 continue
             
+            # Validate file extension
+            allowed_extensions = ['.txt', '.json', '.md']
+            file_ext = os.path.splitext(file.filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                errors.append({
+                    "filename": file.filename,
+                    "status": "error",
+                    "error": f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+                })
+                continue
+            
             # Check file size first
             content = await file.read()
             if len(content) > 5 * 1024 * 1024:  # 5MB limit
@@ -712,11 +736,21 @@ async def bulk_upload(files: List[UploadFile] = File(...)):
                 })
                 continue
             
-            # Reset file position
-            await file.seek(0)
+            # Create a mock file for processing
+            import io
+            class MockUploadFile:
+                def __init__(self, content, filename):
+                    self.file = io.BytesIO(content)
+                    self.filename = filename
+                    
+                async def read(self):
+                    return self.file.getvalue()
+                    
+                async def seek(self, position):
+                    self.file.seek(position)
             
-            # Process each file
-            processed = await processor.process_file(file)
+            mock_file = MockUploadFile(content, file.filename)
+            processed = await processor.process_file(mock_file)
             doc_id = hashlib.md5(f"{file.filename}{datetime.now()}".encode()).hexdigest()[:12]
             
             doc_store.add_document(
