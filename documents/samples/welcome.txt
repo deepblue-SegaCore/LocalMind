@@ -1,0 +1,12 @@
+Welcome to LocalMind!
+
+This is a sample document to demonstrate the search functionality.
+LocalMind is a personal knowledge assistant that helps you search through your documents using AI.
+
+Features:
+- Document upload and indexing
+- Semantic search
+- Web search integration
+- Statistics and analytics
+
+Try uploading your own documents and searching for specific topics!

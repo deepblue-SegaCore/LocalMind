@@ -1,0 +1,13 @@
+/* Additional styles for LocalMind */
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.success {
+    color: #4CAF50;
+}
+
+.error {
+    color: #f44336;
+}
